@@ -2,54 +2,38 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Events\UserRegistered;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\LoginRequest;
+use App\Http\Requests\SignUpRequest;
+use App\Http\Resources\UserResource;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Validation\Rule;
 use Illuminate\Http\Request;
 use App\Models\User;
-use Illuminate\Support\Facades\Mail;
-use App\Mail\WelcomeMail;
+
 
 class UserController extends Controller
 {
    
-    public function signup(Request $request)
+    public function signup(SignUpRequest $request)
     {
-        $request->validate([
-            'name' => 'required|string',
-            'email' => 'required|email|unique:users',
-            'password' => 'required',
-            'image' => 'required|image'
-        ]);
+        $data = $request->validated();
+        $data['image'] = $data['image']->store('avatars');
+        $data['password'] =  Hash::make($data['password']);
 
-        
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'image' =>  $request->file('image')->store('avatars')
-        ]);
-
+        $user = User::create($data);
         $token = $user->createToken('auth-token');
         
-        Mail::to($user->email)->send(new WelcomeMail('welcome to aour system'));
-        
-        return response()->json([
-            'user' => $user,
+        event(new UserRegistered($user));       
+        return (new UserResource($user))->additional([
             'auth_token' => $token->plainTextToken
         ]);
     }
 
     
-    public function login(Request $request)
+    public function login(LoginRequest $request)
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
-
         $user = User::where('email', $request->email)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
@@ -64,20 +48,13 @@ class UserController extends Controller
     }
 
     
-    public function follow(Request $request)
+    public function follow(User $user,Request $request)
     {
-        $request->validate([
-            'user_id' => [
-                'required',
-                Rule::in(User::pluck('id'))
-            ]
-        ]);
-
         $currentUser = $request->user();
-        $followingUser = User::find($request->user_id);
+        $followingUser = $user;
 
         $followings = $currentUser->followings();
-        if ($followings->where('follower_id', $currentUser->id)->where('user_id', $request->user_id)->exists()) {
+        if ($followings->where('user_id', $request->user_id)->first()) {
             return response()->json([
                 'message' => __('lang.followed_already', ['name' => $followingUser->name])
             ],404);
